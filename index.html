@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>LFJC Online Exam System — 2025 Final v2</title>
+<style>
+  :root {
+    --main: #0055cc;
+    --green: #28a745;
+    --gray: #888;
+    --red: #d33;
+    font-size: 22px;
+  }
+  body {
+    font-family: Arial, sans-serif;
+    background: #f3f6fb;
+    margin: 0; padding: 0;
+    color: #222;
+  }
+  .container {
+    max-width: 900px; margin: auto;
+    background: white; padding: 25px;
+    box-shadow: 0 0 15px rgba(0,0,0,0.15);
+    border-radius: 20px; margin-top: 25px;
+  }
+  h1, h2 { text-align: center; color: var(--main); }
+  input, select, button, textarea {
+    font-size: 1rem; padding: 10px; margin: 6px 0;
+    border-radius: 10px; border: 1px solid #ccc; width: 100%;
+  }
+  button {
+    background: var(--main); color: white; border: none;
+  }
+  button:hover { opacity: 0.9; cursor: pointer; }
+  .hidden { display: none; }
+  .question img {
+    max-width: 100%; border-radius: 10px;
+    border: 1px solid #ddd; margin-bottom: 15px;
+  }
+  .options button {
+    display: block; width: 100%; margin: 5px 0;
+    background: #eee; color: #222;
+  }
+  .options button.selected { background: var(--green); color: #fff; }
+  .progress {
+    text-align: center; margin-top: 10px; font-weight: bold;
+  }
+  textarea#answerKey {
+    width: 100%;
+    font-size: 1rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+  }
+  #shareBox {
+    display: none;
+    text-align: center;
+    margin-top: 15px;
+  }
+  #shareBox input {
+    width: 90%;
+    padding: 8px;
+    font-size: 22px;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+  }
+  #shareBox button {
+    background-color: var(--green);
+    color: white;
+    padding: 10px 16px;
+    font-size: 22px;
+    border: none;
+    border-radius: 8px;
+    margin-top: 10px;
+  }
+</style>
+</head>
+<body>
+<div class="container" id="loginScreen">
+  <h1>LFJC Online Exam System</h1>
+  <h3>Teacher / Student Login</h3>
+  <button onclick="showTeacherLogin()">Teacher Login</button>
+  <button onclick="showStudentLogin()">Student Login</button>
+</div>
+
+<!-- Teacher Login -->
+<div class="container hidden" id="teacherLogin">
+  <h2>Teacher Login</h2>
+  <input type="password" id="teacherPass" placeholder="Enter password">
+  <button onclick="checkTeacherLogin()">Login</button>
+  <button onclick="backToHome()">Back</button>
+</div>
+
+<!-- Teacher Mode -->
+<div class="container hidden" id="teacherMode">
+  <h2>Teacher Mode</h2>
+  <button onclick="logoutTeacher()">Logout</button>
+  <h3>Create or Upload Exam</h3>
+
+  <label>Exam Name:</label>
+  <input type="text" id="examName" placeholder="Ex: Physics Test">
+
+  <label>Select Images (local upload):</label>
+  <input type="file" id="imageUpload" multiple accept="image/*">
+
+  <label>Total Questions (max 180):</label>
+  <input type="number" id="questionCount" min="1" max="180" placeholder="Ex: 50">
+
+  <label>Answer Key (5 per row, use A–D):</label>
+  <textarea id="answerKey" rows="5" placeholder="Ex: A B C D A  B C D A B ..."></textarea>
+
+  <label>Google Form link (optional):</label>
+  <input type="text" id="formLink" placeholder="Paste your formResponse URL here (optional)">
+
+  <label>Google Drive Share Link (for student exam):</label>
+  <input id="gdriveLink" placeholder="Paste Google Drive link here">
+
+  <button onclick="saveExam()">Save Exam</button>
+  <button onclick="generateShareLink()">Generate Share Link</button>
+  <div id="shareBox">
+    <p style="font-size:22px;">📎 Student Share Link:</p>
+    <input id="shareLink" type="text" readonly>
+    <br>
+    <button onclick="copyShareLink()">Copy Share Link</button>
+  </div>
+  <p id="saveMsg"></p>
+</div>
+
+<!-- Student Mode -->
+<div class="container hidden" id="studentLogin">
+  <h2>Student Login</h2>
+  <input type="text" id="studentName" placeholder="Your Name">
+  <input type="text" id="rollNumber" placeholder="Roll Number">
+  <button onclick="startExam()">Start Exam</button>
+  <button onclick="backToHome()">Back</button>
+</div>
+
+<!-- Exam Interface -->
+<div class="container hidden" id="examScreen">
+  <h2 id="examTitle"></h2>
+  <div class="question" id="questionBox"></div>
+  <div class="options" id="optionsBox"></div>
+  <div class="progress" id="progress"></div>
+  <button onclick="nextQuestion()">Next</button>
+  <button onclick="finishExam()">Finish</button>
+</div>
+
+<!-- Result Screen -->
+<div class="container hidden" id="resultScreen">
+  <h2>Exam Result</h2>
+  <p id="resultText"></p>
+  <button onclick="backToHome()">Home</button>
+</div>
+
+<script>
+const teacherPassword = "lfjc2025";
+let examData = { images: [], answers: [], total: 0, formLink: "", examName: "" };
+let currentQ = 0, correct = 0;
+let student = { name: "", roll: "" };
+
+function showTeacherLogin(){ toggle("loginScreen", false); toggle("teacherLogin", true); }
+function showStudentLogin(){ toggle("loginScreen", false); toggle("studentLogin", true); }
+function backToHome(){
+  document.querySelectorAll(".container").forEach(c=>c.classList.add("hidden"));
+  toggle("loginScreen", true);
+}
+function logoutTeacher(){
+  toggle("teacherMode", false);
+  toggle("loginScreen", true);
+}
+function toggle(id, show=true){
+  document.getElementById(id).classList[show ? "remove" : "add"]("hidden");
+}
+
+function checkTeacherLogin(){
+  const pass = document.getElementById("teacherPass").value.trim();
+  if(pass === teacherPassword){
+    toggle("teacherLogin", false);
+    toggle("teacherMode", true);
+  } else alert("Incorrect password!");
+}
+
+function saveExam(){
+  const name = document.getElementById("examName").value.trim();
+  const count = parseInt(document.getElementById("questionCount").value);
+  const ansRaw = document.getElementById("answerKey").value.trim().split(/\s+/);
+  const formLink = document.getElementById("formLink").value.trim();
+  const files = document.getElementById("imageUpload").files;
+
+  if(!name || !count){ alert("Please enter exam name and total questions."); return; }
+  if(ansRaw.length < count){ alert("Answer key incomplete!"); return; }
+
+  examData.examName = name;
+  examData.total = count;
+  examData.answers = ansRaw.slice(0,count);
+  examData.formLink = formLink;
+
+  examData.images = [];
+  for(let f of files){
+    const url = URL.createObjectURL(f);
+    examData.images.push(url);
+  }
+
+  localStorage.setItem("LFJC_examData", JSON.stringify(examData));
+  document.getElementById("saveMsg").innerHTML = `✅ Exam '${name}' saved locally.`;
+  alert("Exam saved successfully!");
+}
+
+function generateShareLink() {
+  const raw = document.getElementById('gdriveLink').value.trim();
+  if (!raw) { alert('Please paste your Google Drive share link first!'); return; }
+  const idMatch = raw.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (!idMatch) { alert('Invalid Google Drive link!'); return; }
+  const fileId = idMatch[1];
+  const previewURL = `https://drive.google.com/file/d/${fileId}/preview?mode=student`;
+
+  const box = document.getElementById('shareBox');
+  const field = document.getElementById('shareLink');
+  box.style.display = 'block';
+  field.value = previewURL;
+}
+
+function copyShareLink() {
+  const field = document.getElementById('shareLink');
+  field.select();
+  document.execCommand('copy');
+  alert('✅ Link copied! You can paste it in WhatsApp or email for students.');
+}
+
+function startExam(){
+  const saved = localStorage.getItem("LFJC_examData");
+  if(!saved){ alert("No exam found. Teacher must save exam first."); return; }
+
+  student.name = document.getElementById("studentName").value.trim();
+  student.roll = document.getElementById("rollNumber").value.trim();
+  if(!student.name || !student.roll){ alert("Enter name and roll number."); return; }
+
+  examData = JSON.parse(saved);
+  currentQ = 0; correct = 0;
+  toggle("studentLogin", false);
+  toggle("examScreen", true);
+  document.getElementById("examTitle").innerText = examData.examName;
+  showQuestion();
+}
+
+function showQuestion(){
+  const qBox = document.getElementById("questionBox");
+  const oBox = document.getElementById("optionsBox");
+  qBox.innerHTML = "";
+  oBox.innerHTML = "";
+  if(currentQ >= examData.total){ finishExam(); return; }
+
+  const img = document.createElement("img");
+  img.src = examData.images[currentQ];
+  img.alt = "Question " + (currentQ+1);
+  qBox.appendChild(img);
+
+  ["A","B","C","D"].forEach(opt=>{
+    const btn = document.createElement("button");
+    btn.textContent = opt;
+    btn.onclick = ()=>selectOption(btn,opt);
+    oBox.appendChild(btn);
+  });
+  updateProgress();
+}
+
+function selectOption(btn,opt){
+  const all = document.querySelectorAll("#optionsBox button");
+  all.forEach(b=>b.classList.remove("selected"));
+  btn.classList.add("selected");
+  if(opt === examData.answers[currentQ].toUpperCase()) correct++;
+  localStorage.setItem(`LFJC_${examData.examName}_${student.roll}_${currentQ}`, opt);
+  updateProgress();
+}
+
+function nextQuestion(){
+  if(currentQ < examData.total-1){
+    currentQ++;
+    showQuestion();
+  } else finishExam();
+}
+
+function updateProgress(){
+  document.getElementById("progress").innerText =
+    `Question ${currentQ+1} of ${examData.total}`;
+}
+
+function finishExam(){
+  toggle("examScreen", false);
+  toggle("resultScreen", true);
+
+  const percent = ((correct / examData.total) * 100).toFixed(2);
+  const text = `
+    Name: ${student.name}<br>
+    Roll: ${student.roll}<br>
+    Exam: ${examData.examName}<br>
+    Score: ${correct}/${examData.total}<br>
+    Percentage: ${percent}%`;
+  document.getElementById("resultText").innerHTML = text;
+
+  if(examData.formLink && examData.formLink.includes("formResponse")){
+    const formData = new FormData();
+    formData.append("entry.1111111111", student.name);
+    formData.append("entry.2222222222", student.roll);
+    formData.append("entry.3333333333", examData.examName);
+    formData.append("entry.4444444444", correct + "/" + examData.total);
+    formData.append("entry.5555555555", percent + "%");
+    fetch(examData.formLink, { method: "POST", body: formData });
+  }
+
+  for(let i=0; i<examData.total; i++){
+    localStorage.removeItem(`LFJC_${examData.examName}_${student.roll}_${i}`);
+  }
+}
+</script>
+</body>
+</html>
