@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LFJC Online Exam Portal</title>
+<style>
+body { font-family: Arial,sans-serif; margin:0; padding:0; background:#f7f7f7; }
+#modeSelection { display:flex; justify-content:center; align-items:center; height:100vh; gap:50px; }
+.modeBtn { padding:30px 50px; font-size:24px; cursor:pointer; background:#0056b3; color:#fff; border:none; border-radius:8px; }
+.modeBtn:hover { background:#003f7f; }
+#adminPanel, #studentPanel { display:none; padding:20px; }
+button { cursor:pointer; }
+</style>
+</head>
+<body>
+
+<div id="modeSelection">
+  <button class="modeBtn" id="teacherModeBtn">Teacher Mode</button>
+  <button class="modeBtn" id="studentModeBtn">Student Mode</button>
+</div>
+
+<!-- Admin Panel -->
+<div id="adminPanel">
+  <h2>Admin / Teacher Panel</h2>
+  <button id="logoutAdminBtn">Logout</button><br><br>
+
+  <label>Exam Name: <input type="text" id="adminName" placeholder="Untitled Exam"></label><br><br>
+  <label>Duration (min): <input type="number" id="adminDuration" value="60"></label><br><br>
+  <label>Marks per Question: <input type="number" id="marksPerQ" value="1"></label><br><br>
+  <label>Negative Marking? 
+    <select id="enableNegative">
+      <option value="no">No</option>
+      <option value="yes">Yes</option>
+    </select>
+  </label>
+  <input type="number" id="negativeValue" value="-1" placeholder="Negative value"><br><br>
+
+  <label>Upload Questions (images): <input type="file" id="adminFiles" multiple></label><br><br>
+  <label>Answer Key (A-D, space or comma separated): <input type="text" id="adminKeyInput"></label>
+  <button id="clearKeyBtn">Clear Key</button><br><br>
+
+  <label>Google Sheet Webhook URL: <input type="text" id="adminWebhook" placeholder="Paste Apps Script URL here"></label><br><br>
+
+  <button id="adminSaveBtn">Save Exam</button>
+</div>
+
+<!-- Student Panel -->
+<div id="studentPanel">
+  <h2>Student Panel</h2>
+  <div id="studentEntry">
+    <label>Name: <input type="text" id="stuName"></label><br><br>
+    <label>Roll: <input type="text" id="stuRoll"></label><br><br>
+    <button id="stuLoadSavedBtn">Load Exam</button>
+    <button id="stuStartBtn" disabled>Start Exam</button>
+    <p id="studentMsg"></p>
+  </div>
+
+  <div id="examArea" style="display:none;">
+    <div id="stuInfo"></div>
+    <div id="timerEl"></div>
+    <div id="questionContainer"></div>
+    <div id="paletteGrid"></div>
+    <div id="paletteCounters"></div>
+    <button id="prevBtn">Previous</button>
+    <button id="nextBtn">Next</button>
+    <button id="markReviewBtn">Mark for Review</button>
+    <button id="submitBtn">Submit Exam</button>
+  </div>
+
+  <div id="afterSubmitMsg" style="display:none;">
+    <h3>Exam Submitted!</h3>
+    <div id="studentScore"></div>
+    <div id="studentPercent"></div>
+    <button id="takeAgainBtn">Take Another Exam</button>
+  </div>
+</div>
+
+<script>
+/* --- Variables --- */
+let examData=null, progress=null, timerInterval=null, examLoadedForStudent=false;
+const STORAGE_EXAM='LFJC_EXAM', STORAGE_PROGRESS='LFJC_PROGRESS', STORAGE_RESULTS='LFJC_RESULTS';
+const teacherModeBtn=document.getElementById('teacherModeBtn'), studentModeBtn=document.getElementById('studentModeBtn');
+const adminPanel=document.getElementById('adminPanel'), studentPanel=document.getElementById('studentPanel');
+const logoutAdminBtn=document.getElementById('logoutAdminBtn');
+const adminName=document.getElementById('adminName'), adminDuration=document.getElementById('adminDuration');
+const adminFiles=document.getElementById('adminFiles'), adminKeyInput=document.getElementById('adminKeyInput');
+const adminSaveBtn=document.getElementById('adminSaveBtn'), clearKeyBtn=document.getElementById('clearKeyBtn');
+const marksPerQ=document.getElementById('marksPerQ'), enableNegative=document.getElementById('enableNegative'), negativeValue=document.getElementById('negativeValue');
+const adminWebhook=document.getElementById('adminWebhook');
+
+const stuLoadSavedBtn=document.getElementById('stuLoadSavedBtn'), stuStartBtn=document.getElementById('stuStartBtn');
+const stuName=document.getElementById('stuName'), stuRoll=document.getElementById('stuRoll');
+const studentMsg=document.getElementById('studentMsg'), studentEntry=document.getElementById('studentEntry');
+const examArea=document.getElementById('examArea'), stuInfo=document.getElementById('stuInfo');
+const timerEl=document.getElementById('timerEl'), questionContainer=document.getElementById('questionContainer');
+const paletteGrid=document.getElementById('paletteGrid'), paletteCounters=document.getElementById('paletteCounters');
+const prevBtn=document.getElementById('prevBtn'), nextBtn=document.getElementById('nextBtn');
+const markReviewBtn=document.getElementById('markReviewBtn'), submitBtn=document.getElementById('submitBtn');
+const afterSubmitMsg=document.getElementById('afterSubmitMsg'), takeAgainBtn=document.getElementById('takeAgainBtn');
+const studentScore=document.getElementById('studentScore'), studentPercent=document.getElementById('studentPercent');
+
+/* --- Mode selection --- */
+teacherModeBtn.onclick=()=>{
+  adminPanel.style.display='block';
+  studentPanel.style.display='none';
+  document.getElementById('modeSelection').style.display='none';
+};
+studentModeBtn.onclick=()=>{
+  studentPanel.style.display='block';
+  adminPanel.style.display='none';
+  document.getElementById('modeSelection').style.display='none';
+};
+
+/* --- Logout --- */
+logoutAdminBtn.onclick=()=>{ location.reload(); };
+
+/* --- Admin Save Exam --- */
+let keyArray=[];
+adminKeyInput.addEventListener('input', ()=>{ keyArray=adminKeyInput.value.toUpperCase().replace(/[^A-D]/g,'').split(''); });
+
+clearKeyBtn.onclick=()=>{ keyArray=[]; adminKeyInput.value=''; };
+
+adminSaveBtn.onclick=async ()=>{
+  const files=Array.from(adminFiles.files||[]); if(files.length===0){ alert('Upload images'); return; }
+  if(keyArray.length!==files.length){ alert('Key length mismatch'); return; }
+  const name=adminName.value||'Untitled Exam';
+  const duration=parseInt(adminDuration.value)||60;
+  const marks=parseFloat(marksPerQ.value)||1;
+  const negativeEnabled=enableNegative.value==='yes';
+  const negVal=negativeEnabled ? parseFloat(negativeValue.value)||0 : 0;
+  adminSaveBtn.disabled=true; adminSaveBtn.textContent='Saving...';
+  try{
+    const readers=files.map(f=>new Promise((res,rej)=>{
+      const r=new FileReader(); r.onload=e=>res(e.target.result); r.onerror=rej; r.readAsDataURL(f);
+    }));
+    const images=await Promise.all(readers);
+    examData={ name, durationMin: duration, marksPerQuestion: marks, negativeEnabled, negativeValue: negVal, images, key: keyArray.slice(), savedAt:new Date().toISOString(), webhook: adminWebhook.value||null };
+    localStorage.setItem(STORAGE_EXAM, JSON.stringify(examData));
+    alert('Exam saved locally. Students can load exam now.');
+  }catch(e){ console.error(e); alert('Error: '+e); } finally{ adminSaveBtn.disabled=false; adminSaveBtn.textContent='Save Exam'; }
+};
+
+/* --- Student Load Exam --- */
+stuLoadSavedBtn.onclick=()=>{
+  const raw=localStorage.getItem(STORAGE_EXAM); if(!raw){ alert('No exam'); return; }
+  examData=JSON.parse(raw); examLoadedForStudent=true; stuStartBtn.disabled=false;
+  studentMsg.textContent=`Loaded exam: ${examData.name} — ${examData.images.length} Q | ${examData.durationMin||'?'} min`;
+};
+
+/* --- Student Start Exam --- */
+stuStartBtn.onclick=()=>{
+  if(!examLoadedForStudent){ alert('Load exam first'); return; }
+  const name=stuName.value.trim(), roll=stuRoll.value.trim();
+  if(!name || !roll){ alert('Enter Name & Roll'); return; }
+  progress={ answers:Array(examData.images.length).fill(null), review:Array(examData.images.length).fill(false), currentIndex:0, student:{name,roll}, timeLeftSec:examData.durationMin*60, durationMin:examData.durationMin };
+  studentEntry.style.display='none'; examArea.style.display='block'; stuInfo.textContent=`${name} | Roll: ${roll}`;
+  renderQuestion(); renderPalette(); startTimer();
+};
+
+/* --- Render Question & Palette --- */
+function renderQuestion(){
+  const i=progress.currentIndex, image=examData.images[i];
+  progress.answers[i]=progress.answers[i]||null;
+  questionContainer.innerHTML=`<div>Q${i+1} of ${examData.images.length}</div><img src="${image}" width="300"><div>${['A','B','C','D'].map(o=>`<button class="optBtn" data-opt="${o}">${o}</button>`).join('')}</div>`;
+  document.querySelectorAll('.optBtn').forEach(btn=>btn.onclick=()=>{
+    progress.answers[i]=btn.dataset.opt;
+    saveProgress();
+    renderPalette();
+  });
+}
+
+function renderPalette(){
+  paletteGrid.innerHTML='';
+  progress.answers.forEach((ans,i)=>{
+    const btn=document.createElement('button'); btn.textContent=i+1;
+    if(progress.review[i]) btn.style.background='orange';
+    else if(ans) btn.style.background='green';
+    else btn.style.background='lightgray';
+    if(i===progress.currentIndex) btn.style.border='2px solid red';
+    btn.onclick=()=>{ progress.currentIndex=i; renderQuestion(); renderPalette(); };
+    paletteGrid.appendChild(btn);
+  });
+}
+
+/* --- Navigation --- */
+prevBtn.onclick=()=>{ if(progress.currentIndex>0) progress.currentIndex--; renderQuestion(); renderPalette(); saveProgress(); };
+nextBtn.onclick=()=>{ if(progress.currentIndex<examData.images.length-1) progress.currentIndex++; renderQuestion(); renderPalette(); saveProgress(); };
+markReviewBtn.onclick=()=>{ progress.review[progress.currentIndex]=!progress.review[progress.currentIndex]; renderPalette(); };
+
+/* --- Timer --- */
+function startTimer(){
+  if(timerInterval) clearInterval(timerInterval);
+  timerInterval=setInterval(()=>{
+    progress.timeLeftSec--; updateTimerDisplay();
+    if(progress.timeLeftSec<=0){ clearInterval(timerInterval); alert("Time's up!"); finishAndShowResult(); }
+  },1000);
+  updateTimerDisplay();
+}
+function updateTimerDisplay(){ const mm=Math.floor(progress.timeLeftSec/60), ss=progress.timeLeftSec%60; timerEl.textContent=`Time: ${mm}:${ss}`; }
+
+/* --- Save / Load Progress --- */
+function saveProgress(){ localStorage.setItem(STORAGE_PROGRESS, JSON.stringify(progress)); }
+function loadProgress(){ const raw=localStorage.getItem(STORAGE_PROGRESS); return raw ? JSON.parse(raw) : null; }
+
+/* --- Submit Exam & Send to Google Sheet --- */
+submitBtn.onclick=()=>{ if(confirm('Submit?')) finishAndShowResult(); };
+function finishAndShowResult(){
+  if(timerInterval) clearInterval(timerInterval);
+  let score=0, totalMarks=(examData.marksPerQuestion||1)*examData.images.length;
+  examData.images.forEach((q,i)=>{
+    if(progress.answers[i] && progress.answers[i].toUpperCase()===examData.key[i].toUpperCase()) score+=examData.marksPerQuestion;
+    else if(examData.negativeEnabled) score+=examData.negativeValue;
+  });
+  const percent=Math.round((score/totalMarks)*100*100)/100;
+  studentScore.textContent=`Score: ${score}/${totalMarks}`;
+  studentPercent.textContent=`Percent: ${percent}%`;
+  examArea.style.display='none'; afterSubmitMsg.style.display='block';
+
+  // send to Google Sheet
+  if(examData.webhook){
+    fetch(examData.webhook,{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
+      timestamp:(new Date()).toISOString(),
+      examName:examData.name,
+      student:progress.student,
+      answers:progress.answers,
+      correct:examData.key,
+      weights:Array(examData.images.length).fill(examData.marksPerQuestion||1),
+      negativeValue:examData.negativeEnabled?examData.negativeValue:0,
+      score, percent
+    })}).then(res=>res.json()).then(d=>console.log(d)).catch(e=>console.warn(e));
+  }
+  localStorage.removeItem(STORAGE_PROGRESS); progress=null; examLoadedForStudent=false; stuStartBtn.disabled=true;
+}
+
+takeAgainBtn.onclick=()=>{ afterSubmitMsg.style.display='none'; studentEntry.style.display='block'; };
+
+/* Prevent data loss */
+window.addEventListener('beforeunload',()=>{ saveProgress(); });
+</script>
+</body>
+</html>
